@@ -45,7 +45,7 @@ struct
 
 float current_time()
 {
-	return (float) clock() / CLOCKS_PER_SEC;
+	return (double) clock() / CLOCKS_PER_SEC;
 }
 
 void accelerate_left()
@@ -73,10 +73,10 @@ void init_game()
 			.x = RES_X * 0.5f,
 			.y = RES_Y - 200
 		},
-		.radius = 30.0f,
+		.radius = 15.0f,
 		.speed = (struct pos) {
 			.x = 0,
-			.y = 500.0f
+			.y = 30.0f
 		}
 	};
 
@@ -210,6 +210,7 @@ void update_positions()
 	static float last_recorded_time = 0.0f;
 	float current_time_tmp = current_time();
 	float time_elapsed = current_time_tmp - last_recorded_time; 
+//	printf("Current time: %f time elapsed %f\n", current_time_tmp, time_elapsed);
 	last_recorded_time = current_time_tmp;
 	
 	// I'm ashamed to be doing it like this, but I will need the previous positions when rendering
@@ -228,9 +229,24 @@ void check_win_or_lose()
 		game.state = LOST;
 }
 
+void erase_ball_trace()
+{
+	int i, j;
+	// TODO Intellectually get the points to be erased
+	for (i = last_ball_pos.y - game.ball.radius; i <= last_ball_pos.y + game.ball.radius; ++i)
+		for (j = last_ball_pos.x - game.ball.radius; j <= last_ball_pos.x + game.ball.radius; ++j)
+		{
+			int ry = i - game.ball.pos.y;
+			int rx = j - game.ball.pos.x;
+			if (rx * rx + ry * ry > game.ball.radius * game.ball.radius)
+				fb[pixel_number(i, j)] = background_color;
+		}
+}
+
 void render()
 {
 	// erase previous apparition
+	erase_ball_trace();
 //	draw_ball(last_ball_pos, game.ball.radius, &background_color);
 //	draw_pad(&background_color);
 
@@ -248,7 +264,6 @@ void run()
 //		check_collisions();
 		check_win_or_lose();
 		render();
-		usleep(10000);
 	}
 //	render();
 }
@@ -256,7 +271,7 @@ void run()
 int main(int argn, char **argc)
 {
 	init();
-//	run();
+	run();
 //	teardown();
 	return 0;
 }
