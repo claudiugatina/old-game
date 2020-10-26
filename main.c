@@ -2,6 +2,7 @@
 #include <time.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include "keyboard_listener.c"
 
 #define NMAX 20
@@ -115,12 +116,20 @@ void draw_uniform_color(struct color * clr)
 		fb[i] = *clr;
 }
 
+int noise_amplitude = 20;
+
 void draw_rectangle(struct pos top_left, struct pos bot_right, struct color * clr)
 {
 	int i, j;
 	for (i = top_left.y + 1; i < bot_right.y; ++i)
 		for (j = top_left.x + 1; j < bot_right.x; ++j)
-			fb[pixel_number(i, j)] = *clr;
+		{
+			struct color noise_added = *clr;
+			noise_added.b += ((rand() % noise_amplitude) / 2 - noise_amplitude);
+			noise_added.g += ((rand() % noise_amplitude) / 2 - noise_amplitude);
+			noise_added.r += ((rand() % noise_amplitude) / 2 - noise_amplitude);
+			fb[pixel_number(i, j)] = noise_added;
+		}
 }
 
 void draw_pad(struct color * clr)
@@ -175,7 +184,11 @@ void init_renderer()
 	for (i = 0; i < NMAX; ++i)
 		for (j = 0; j < MMAX; ++j)
 			if (game.is_block[i][j])
-				draw_rectangle(grid_to_screen(i, j), grid_to_screen(i + 1, j + 1), &block_color);
+			{
+				int na = noise_amplitude, rna = 255 - noise_amplitude;
+				struct color random_color = { .b = na + rand() % rna , .g = na + rand() % rna, .r = na + rand() % rna, .a = 0 };
+				draw_rectangle(grid_to_screen(i, j), grid_to_screen(i + 1, j + 1), &random_color);
+			}
 
 	draw_ball(game.ball.pos, game.ball.radius, &ball_color);
 	draw_pad(&pad_color);
