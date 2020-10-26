@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <time.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 #include "keyboard_listener.c"
 
 #define NMAX 20
@@ -89,7 +91,7 @@ void init_game()
 	game.state = INDECISIVE;
 }
 
-FILE * framebuffer;
+int framebuffer;
 
 struct color
 {
@@ -98,41 +100,27 @@ struct color
 , buf[RES_Y][RES_X]
 , block_color = { .b = 255, .g = 255, .r = 255, .a = 0 }
 , pad_color = { .b = 255, .g = 255, .r = 255, .a = 0 }
-, ball_color = { .b = 255, .g = 230, .r = 230, .a = 0 };
-
-void draw_n_pixels_in_line(int n, struct color * clr)
-{
-	int i;
-	for (i = 0; i < n; ++i)
-		fwrite(clr, sizeof(struct color), 1, framebuffer);
-}
-
-void draw_uniform_color(struct color * clr)
-{
-	fseek(framebuffer, 0, SEEK_SET);
-	draw_n_pixels_in_line(RES_Y * RES_X, clr);
-}
+, ball_color = { .b = 255, .g = 230, .r = 230, .a = 0 }
+, *fb;
 
 int pixel_number(int y, int x)
 {
 	return y * RES_X + x;
 }
 
-int pixel_offset(int y, int x)
+void draw_uniform_color(struct color * clr)
 {
-	return sizeof(struct color) * pixel_number(y, x);
+	int i;
+	for (i = 0; i < RES_Y * RES_X; ++i)
+		fb[i] = *clr;
 }
 
 void draw_rectangle(struct pos top_left, struct pos bot_right, struct color * clr)
 {
-	int i;
-	int j = top_left.x + 1;
-	int width = bot_right.x - top_left.x;
+	int i, j;
 	for (i = top_left.y + 1; i < bot_right.y; ++i)
-	{
-		fseek(framebuffer, pixel_offset(i, j), SEEK_SET);
-		draw_n_pixels_in_line(width - 2, clr);
-	}
+		for (j = top_left.x + 1; j < bot_right.x; ++j)
+			fb[pixel_number(i, j)] = *clr;
 }
 
 void draw_pad(struct color * clr)
@@ -153,23 +141,17 @@ void draw_ball(struct pos c, float R, struct color * clr)
 	{
 		while(half_width * half_width + i * i < r * r)
 			++half_width;
-		fseek(framebuffer, pixel_offset(i + c.y, c.x - half_width), SEEK_SET);
-		draw_n_pixels_in_line(half_width << 1, clr);
+		for(j = -half_width; j <= half_width; ++j)
+			fb[pixel_number(c.y + i, c.x + j)] = *clr;
 	}
 
 	for (i = 0; i <= r; ++i)
 	{
 		while(half_width * half_width + i * i >= r * r)
 			--half_width;
-		fseek(framebuffer, pixel_offset(i + c.y, c.x - half_width), SEEK_SET);
-		draw_n_pixels_in_line(half_width << 1, clr);
+		for(j = -half_width; j <= half_width; ++j)
+			fb[pixel_number(c.y + i, c.x + j)] = *clr;
 	}
-}
-
-void write_to_framebuffer()
-{
-	fseek(framebuffer, 0, SEEK_SET);
-	fwrite(buf, sizeof(buf), 1, framebuffer);
 }
 
 struct pos grid_to_screen(int y, int x)
@@ -186,7 +168,8 @@ struct pos screen_to_grid(struct pos pos)
 
 void init_renderer()
 {
-	framebuffer = fopen("/dev/fb0", "w");
+	framebuffer = open("/dev/fb0", O_RDWR);
+	fb = mmap(NULL, sizeof(buf), PROT_WRITE | PROT_READ, MAP_SHARED, framebuffer, 0);
 	draw_uniform_color(&background_color);
 	int i, j;
 	for (i = 0; i < NMAX; ++i)
@@ -273,7 +256,7 @@ void run()
 int main(int argn, char **argc)
 {
 	init();
-	run();
+//	run();
 //	teardown();
 	return 0;
 }
