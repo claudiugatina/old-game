@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <time.h>
 #include <sys/mman.h>
+#include <sys/time.h>
+#include <linux/fb.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include "keyboard_listener.c"
@@ -29,9 +31,9 @@ struct ball
 
 struct pad
 {
-	int pad_level;
-	int pad_width;
-	int pad_length;
+	int level;
+	int width;
+	int length;
 	float pos;
 	float speed;
 };
@@ -44,9 +46,13 @@ struct
 	char state;
 } game;
 
+struct timeval game_start;
+
 float current_time()
 {
-	return (double) clock() / CLOCKS_PER_SEC;
+	struct timeval present_moment;
+	gettimeofday(&present_moment, NULL);
+	return (float)(present_moment.tv_sec - game_start.tv_sec) + (present_moment.tv_usec - game_start.tv_usec) / 1000000.0;
 }
 
 void accelerate_left()
@@ -61,6 +67,7 @@ void accelerate_right()
 
 void init_game()
 {
+	gettimeofday(&game_start, NULL);
 	int i, j;
 	for (i = 0; i <= NMAX; ++i)
 		for (j = 0; j <= MMAX; ++j)
@@ -77,14 +84,14 @@ void init_game()
 		.radius = 15.0f,
 		.speed = (struct pos) {
 			.x = 0,
-			.y = 30.0f
+			.y = 80.0f
 		}
 	};
 
 	game.pad = (struct pad) {
-		.pad_level = RES_Y - 30,
-		.pad_width = 25,
-		.pad_length = 400,
+		.level = RES_Y - 30,
+		.width = 25,
+		.length = 400,
 		.pos = RES_X * 0.5 - 200,
 		.speed = 0.0f
 	};
@@ -116,11 +123,11 @@ void draw_uniform_color(struct color * clr)
 		fb[i] = *clr;
 }
 
-int noise_amplitude = 20;
-
-void draw_rectangle(struct pos top_left, struct pos bot_right, struct color * clr)
+void draw_rectangle(struct pos top_left, struct pos bot_right, struct color * clr, int noise_amplitude)
 {
 	int i, j;
+	if(noise_amplitude <= 0)
+		noise_amplitude = 1;
 	for (i = top_left.y + 1; i < bot_right.y; ++i)
 		for (j = top_left.x + 1; j < bot_right.x; ++j)
 		{
@@ -134,10 +141,10 @@ void draw_rectangle(struct pos top_left, struct pos bot_right, struct color * cl
 
 void draw_pad(struct color * clr)
 {
-	struct pos bottom_right_pad_corner = { .x = game.pad.pos + game.pad.pad_length, .y = game.pad.pad_level + game.pad.pad_width };	
-	struct pos top_left_pad_corner = { .x = game.pad.pos, .y = game.pad.pad_level};
+	struct pos bottom_right_pad_corner = { .x = game.pad.pos + game.pad.length, .y = game.pad.level + game.pad.width };	
+	struct pos top_left_pad_corner = { .x = game.pad.pos, .y = game.pad.level};
 
-	draw_rectangle(top_left_pad_corner, bottom_right_pad_corner, clr);
+	draw_rectangle(top_left_pad_corner, bottom_right_pad_corner, clr, 0);
 }
 
 void draw_ball(struct pos c, float R, struct color * clr)
@@ -169,9 +176,9 @@ struct pos grid_to_screen(int y, int x)
 	return ret;
 }
 
-struct pos screen_to_grid(struct pos pos)
+struct pos screen_to_grid(int y, int x)
 {
-	struct pos ret = { .x = pos.x * MMAX / RES_X, .y = pos.y * NMAX / RES_Y };
+	struct pos ret = { .x = x * MMAX / RES_X, .y = y * NMAX / RES_Y };
 	return ret;
 }
 
@@ -179,15 +186,19 @@ void init_renderer()
 {
 	framebuffer = open("/dev/fb0", O_RDWR);
 	fb = mmap(NULL, sizeof(buf), PROT_WRITE | PROT_READ, MAP_SHARED, framebuffer, 0);
+	int zero = 0;
+	ioctl(framebuffer, FBIO_WAITFORVSYNC, &zero);
 	draw_uniform_color(&background_color);
 	int i, j;
+	// noise amplitude
+	int na = 20;
+	int rna = 255 - na;
 	for (i = 0; i < NMAX; ++i)
 		for (j = 0; j < MMAX; ++j)
 			if (game.is_block[i][j])
 			{
-				int na = noise_amplitude, rna = 255 - noise_amplitude;
 				struct color random_color = { .b = na + rand() % rna , .g = na + rand() % rna, .r = na + rand() % rna, .a = 0 };
-				draw_rectangle(grid_to_screen(i, j), grid_to_screen(i + 1, j + 1), &random_color);
+				draw_rectangle(grid_to_screen(i, j), grid_to_screen(i + 1, j + 1), &random_color, na);
 			}
 
 	draw_ball(game.ball.pos, game.ball.radius, &ball_color);
@@ -251,7 +262,7 @@ void erase_ball_trace()
 		{
 			int ry = i - game.ball.pos.y;
 			int rx = j - game.ball.pos.x;
-			if (rx * rx + ry * ry > game.ball.radius * game.ball.radius)
+			if (rx * rx + ry * ry >= game.ball.radius * game.ball.radius)
 				fb[pixel_number(i, j)] = background_color;
 		}
 }
@@ -265,6 +276,38 @@ void render()
 
 	draw_ball(game.ball.pos, game.ball.radius, &ball_color);
 	draw_pad(&pad_color);
+	struct fb_var_screeninfo fbvar;
+	ioctl(framebuffer, FBIOGET_VSCREENINFO, &fbvar);
+	ioctl(framebuffer, FBIOPAN_DISPLAY, &fbvar);
+}
+
+void collide_with_pad()
+{
+	game.ball.speed.y *= -1;
+}
+
+void collide_with_block(int i, int j)
+{
+	game.is_block[i][j] = 0;
+	struct pos top_left = grid_to_screen(i, j);
+	struct pos bot_right = grid_to_screen(i + 1, j + 1);
+	draw_rectangle(top_left, bot_right, &background_color, 0);
+	game.ball.speed.y *= -1;
+
+}
+
+void check_collisions()
+{
+	if (game.ball.pos.x >= game.pad.pos && game.ball.pos.x <= game.pad.pos + game.pad.length && game.ball.pos.y + game.ball.radius > game.pad.level)
+		collide_with_pad();
+	struct pos top = screen_to_grid(game.ball.pos.y - game.ball.radius, game.ball.pos.x);
+	struct pos bot = screen_to_grid(game.ball.pos.y + game.ball.radius, game.ball.pos.x);
+
+	int i = top.y;
+	int j = top.x;
+	
+	if(game.is_block[i][j])
+		collide_with_block(i, j);
 }
 
 void run()
@@ -273,10 +316,11 @@ void run()
 	{
 		//process_keyboard_input();
 		update_positions();
-
-//		check_collisions();
+//		printf("\n");
+		check_collisions();
 		check_win_or_lose();
 		render();
+		usleep(10000);
 	}
 //	render();
 }
